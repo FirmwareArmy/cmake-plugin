@@ -1,0 +1,9 @@
+name: test_project
+description: test project
+version: 1.0.0 
+
+dependencies:
+  compile-plugin: ~0.0.0
+
+profiles:
+  - profile

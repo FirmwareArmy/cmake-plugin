@@ -1,0 +1,8 @@
+plugins:
+- name: compile-plugin
+  version: latest
+  config:
+    gcc: true
+
+tools:
+  gcc:

@@ -1,0 +1,16 @@
+name: compile-plugin
+description: plugin to build code
+version: 1.0.0
+
+plugins: 
+  - plugin
+    
+packaging:
+  include:
+    - cmake
+    - LICENSE
+    - README.md
+
+  exclude:
+    - "*.pyc"
+

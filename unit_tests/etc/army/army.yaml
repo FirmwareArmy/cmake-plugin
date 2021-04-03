@@ -1,0 +1,4 @@
+repositories:
+  compile-plugin:
+    type: git-local
+    uri: /..
