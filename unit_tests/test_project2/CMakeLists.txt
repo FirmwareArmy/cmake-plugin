@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-# # import helpers
+# import helpers
 # include(${TOOLCHAIN_PATH}/cmake/helpers.cmake)
 
 # set build options from toolchain file

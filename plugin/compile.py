@@ -1,7 +1,7 @@
 from army.api.command import parser, group, command, option, argument
 from army.api.debugtools import print_stack
 from army.api.log import log, get_log_level
-from army.api.package import load_project_packages
+from army.api.package import load_project_packages, load_installed_package
 from army.api.project import load_project
 import tornado.template as template
 import shutil
@@ -12,17 +12,17 @@ import subprocess
 
 #TODO add https://github.com/HBehrens/puncover
 
-# def to_relative_path(path):
-#     home = os.path.expanduser("~")
-#     abspath = os.path.abspath(path)
-#     if abspath.startswith(home):
-#         path = abspath.replace(home, "~", 1)
-#     cwd = os.path.abspath(os.path.expanduser(os.getcwd()))
-#     if abspath.startswith(cwd):
-#         path = os.path.relpath(abspath, cwd)
-#     return path
-# 
-# toolchain_path = to_relative_path(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+def to_relative_path(path):
+    home = os.path.expanduser("~")
+    abspath = os.path.abspath(path)
+    if abspath.startswith(home):
+        path = abspath.replace(home, "~", 1)
+    cwd = os.path.abspath(os.path.expanduser(os.getcwd()))
+    if abspath.startswith(cwd):
+        path = os.path.relpath(abspath, cwd)
+    return path
+ 
+tools_path = os.path.expanduser(to_relative_path(os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))))
 
 @parser
 @group(name="build")
@@ -45,7 +45,7 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
         print(f"no project found", sys.stderr)
         exit(1)
     
-#     # get target config
+    # get target config
 #     target = ctx.parent.target
 #     target_name = ctx.parent.target_name
 #     if target is None:
@@ -60,7 +60,16 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
     
     # set home directory
     cmake_opts.append("-H.")
-     
+
+    # load dependencies
+    try:
+        dependencies = load_project_packages(project)
+        log.debug(f"dependencies: {dependencies}")
+    except Exception as e:
+        print_stack()
+        print(f"{e}", file=sys.stderr)
+        clean_exit()
+
     # add toolchain
     try:
         toolchain_name = profile.data["/tools/toolchain/name"]        
@@ -73,22 +82,7 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
         print("No toolchain definition provided by profile", file=sys.stderr)
         exit(1)
 
-    # add arch
-    try:
-        arch_cpu = profile.data["/arch/cpu"]        
-        arch_mpu = profile.data["/arch/mpu"]        
-        arch_path = profile.data["/arch/definition"]
-    except Exception as e:
-        print_stack()
-        log.error(e)
-        print("No arch definition provided by profile", file=sys.stderr)
-        exit(1)
-
-    # set build path
-    build_path = os.path.join(output_path, arch_mpu)
-    log.info(f"build_path: {build_path}")
-    cmake_opts.append(f"-B{build_path}")
- 
+    arch, arch_package = get_arch(profile, project, dependencies)
 
     if debug==True and instrument==True:
         print(f"debug and instrument can not be used simultaneously", file=sys.stderr)
@@ -101,7 +95,6 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
     else:
         cmake_opts.append("-DCMAKE_BUILD_TYPE=Release")
  
-    print(f"Build using toolchain {toolchain_name} for arch {arch_mpu}")
     if get_log_level()!="fatal":
         cmake_opts.append("-DCMAKE_VERBOSE_MAKEFILE=ON")
     else:
@@ -111,29 +104,26 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
  
     #  Suppress developer warnings. Suppress warnings that are meant for the author of the CMakeLists.txt files
     cmake_opts.append("-Wno-dev")
- 
-#     # load dependencies
-#     try:
-#         dependencies = load_project_packages(project, target_name)
-#         log.debug(f"dependencies: {dependencies}")
-#     except Exception as e:
-#         print_stack()
-#         print(f"{e}", file=sys.stderr)
-#         clean_exit()
-# 
+
     # search for toolchain binaries
     locate_tools(profile)
-#     
-#     # set build arch 
-#     arch, arch_pkg = get_arch(config, target, dependencies)
-#     log.debug(f"arch: {arch}")
-#     os.putenv("LIBRARY_PATH", os.path.abspath(arch_pkg.path))
-#     os.putenv('arch_path', os.path.abspath(os.path.join(arch_pkg.path, arch.definition)))
-#     
+
+    # set build path
+    if arch.mpu is None:
+        build_path = os.path.join(output_path, arch.cpu)
+        print(f"Build using toolchain {toolchain_name} for arch {arch.cpu}")
+    else:
+        build_path = os.path.join(output_path, arch.mpu)
+        print(f"Build using toolchain {toolchain_name} for mpu {arch.mpu}")
+        
+    log.info(f"build_path: {build_path}")
+    cmake_opts.append(f"-B{build_path}")
+ 
     # for ccache
     os.putenv("CCACHE_LOGFILE", os.path.abspath(os.path.join(build_path, "ccache.log")))
 
     # add path
+    os.putenv("tools_path", os.path.abspath(tools_path))
     os.putenv("toolchain_path", os.path.abspath(toolchain_path))
     os.putenv("project_path", os.path.abspath(os.getcwd()))
     
@@ -142,19 +132,32 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
     os.putenv("asm_path", profile.data['/tools/asm/path'])
     os.putenv("ar_path", profile.data['/tools/ar/path'])
     os.putenv("ld_path", profile.data['/tools/ld/path'])
+    os.putenv("objcopy_path", profile.data['/tools/objcopy/path'])
+    os.putenv("objdump_path", profile.data['/tools/objdump/path'])
+    os.putenv("size_path", profile.data['/tools/size/path'])
+    os.putenv("nm_path", profile.data['/tools/nm/path'])
 
+    # add arch vars
+    os.putenv("cpu", arch.cpu)
+    os.putenv("mpu", arch.mpu)
+    if arch_package is None:
+        os.putenv("arch_package", "_")
+    else:
+        os.putenv("arch_package", arch_package.name)
+    os.putenv("arch_path", arch.cpu_definition)
+    
     try:
         log.info(f"cmake options: {' '.join(cmake_opts)}")
 # 
-#         # add CMakeLists.txt
-#         add_build_file(dependencies, target)
-# 
         # create output folder
         os.makedirs(build_path, exist_ok=True)
-# 
-#     # TODO force rebuild elf file even if not changed
-#     # find ${PROJECT_PATH}/output -name "*.elf" -exec rm -f {} \; 2>/dev/null
-#             
+
+        # add smake files
+        add_cmake_files(build_path, dependencies, arch, arch_package)
+
+        # TODO force rebuild elf file even if not changed
+        # find ${PROJECT_PATH}/output -name "*.elf" -exec rm -f {} \; 2>/dev/null
+
         if get_log_level()=='debug':
             os.system("env")
             SystemExit(_program('cmake', ['--version']))
@@ -205,11 +208,15 @@ def locate_tools(profile):
         "c++": "c++ compiler",
         "asm": "assembler compiler",
         "ld": "linker",
-        "ar": "archive tool"
+        "ar": "archive tool",
+        "objcopy": "object file copy tool",
+        "objdump": "object file content dump tool",
+        "size": "object file size tool",
+        "nm": "symbols export tool",
     }
     for tool, name in tools.items():
         try:
-            tool_path = profile.data["/tools/c/path"] 
+            tool_path = profile.data[f"/tools/{tool}/path"] 
             if os.path.exists(tool_path)==False:
                 print(f"{tool_path}: path not found for {name}", file=sys.stderr)
                 exit(1)
@@ -218,14 +225,6 @@ def locate_tools(profile):
             log.error(e)
             print(f"No {name} defined", file=sys.stderr)
             exit(1)
-
-#         
-#     # search for gcc folder
-#     arm_gcc_path = 'gcc'
-#     if os.path.exists(os.path.join(toolchain_path, arm_gcc_path))==False:
-#         print(f"gcc was not found inside '{toolchain_path}', check plugin installation", file=sys.stderr)
-#         exit(1)
-#     os.putenv('arm_gcc_path', arm_gcc_path)
 # 
 #     # search for eabi
 #     arm_gcc_eabi = None
@@ -237,79 +236,174 @@ def locate_tools(profile):
 #     os.putenv('arm_gcc_eabi', arm_gcc_eabi)
     
 def locate_cmake():
-    global toolchain_path
+    global tools_path
 
     # search for gcc folder
     cmake_path = 'cmake'
-    if os.path.exists(os.path.join(toolchain_path, cmake_path, 'bin', 'cmake'))==False:
-        print(f"cmake was not found inside '{toolchain_path}', check plugin installation", file=sys.stderr)
+    if os.path.exists(os.path.join(tools_path, cmake_path, 'bin', 'cmake'))==False:
+        print(f"cmake was not found inside '{tools_path}', check plugin installation", file=sys.stderr)
         exit(1)
     os.putenv('cmake_path', cmake_path)
     
-    return os.path.join(toolchain_path, cmake_path, 'bin', 'cmake')
+    return os.path.join(tools_path, cmake_path, 'bin', 'cmake')
 
-def get_arch(config, target, dependencies):
-    target_arch = target.arch
-    
-    res = None
-    found_dependency = None
-    for dependency in dependencies:
-        for arch in dependency.arch:
-            if arch==target.arch:
-                if found_dependency is not None:
-                    log.error(f"arch '{arch}' redefinition from'{found_dependency[1].name}' in {dependency.name}")
-                    exit(1)
-                found_dependency = (dependency.arch[arch], dependency)
-                if dependency.arch[arch].definition=="":
-                    log.error(f"missing definition in arch '{arch}' from '{dependency.name}'")
-                    exit(1)
+def add_cmake_files(build_path, dependencies, arch, arch_package):
+    global tools_path
+#     # build list of includes
+#     includes = get_cmake_target_includes(target)
+#     includes += get_cmake_includes(dependencies)
 
-    if found_dependency is None:
-        print(f"no configuration available for arch '{target.arch}'", file=sys.stderr)
-        exit(1)
-    
-    return found_dependency
-
-def get_cmake_includes(dependencies):
-    res = ""
-    
-    for dependency in dependencies:
-        cmake = dependency.cmake
-        if cmake:
-            if cmake.include:
-                library_path = os.path.abspath(dependency.path)
-                res = f'{res}set(LIBRARY_PATH "{library_path}")\n'
-                res = f"{res}include({os.path.join(library_path, cmake.include)})\n"
-    return res
-
-def get_cmake_target_includes(target):
-    res = ""
-    
-    if target.definition:
-        target_path = os.path.abspath(target.definition)
-        res = f'{res}set(TARGET_PATH "{os.path.dirname(target_path)}")\n'
-        res = f"{res}include({target_path})\n"
-    return res
-
-def add_build_file(dependencies, target):
-    global toolchain_path
-    
-    # build list of includes
-    includes = get_cmake_target_includes(target)
-    includes += get_cmake_includes(dependencies)
-    
-    # write CMakeLists.txt from template
+    # copy army.cmake
     try:
-        loader = template.Loader(os.path.join(toolchain_path, 'template'), autoescape=None)
-        cmakelists = loader.load("CMakeLists.txt").generate(
-            includes=includes,
-            project_path=os.path.abspath(os.getcwd())
-        )
-        with open("CMakeLists.txt", "w") as f:
-            f.write(cmakelists.decode("utf-8"))
+        shutil.copy(os.path.join(os.path.expanduser(tools_path), "cmake", "army.cmake"), build_path)
     except Exception as e:
         print_stack()
         log.error(f"{e}")
         exit(1)
+    
+    with open(os.path.join(build_path, "army.cmake"), "a") as fa:
+        print("\n# dependencies section definition", file=fa)
         
+        with open(os.path.join(build_path, "dependencies.cmake"), "w") as fd:
+            for dependency in dependencies:
+                if 'cmake' in dependency.definition:
+                    print(f'set({dependency.name}_path "{dependency.path}")', file=fa)
+                    print(f'set({dependency.name}_definition "{os.path.join(dependency.path, dependency.definition["cmake"])}")', file=fa)
+                    print(f"include_army_package({dependency.name})", file=fd)
+
+                    os.putenv(f"package_{dependency.name}_path", dependency.path)
+                    os.putenv(f"package_{dependency.name}_definition", dependency.definition["cmake"])
+                    
+                log.info(f"Adding dependency: {dependency}")
+            
+            # add arch
+            print("\n# arch definition", file=fa)
+            if arch.mpu_definition is not None:
+                if arch_package is None:
+                    print(f'include_army_package_file(_ {arch.mpu_definition})', file=fd)
+                else:
+                    os.putenv(f"package_{arch_package.name}_path", arch_package.path)
+                    print(f'include_army_package_file({arch_package.name} {arch.mpu_definition})', file=fd)
+
+#                 print(f'set(PACKAGE_PATH "{arch["package_path"]}")', file=fa)
+
+def get_arch(profile, project, dependencies):
+    # add arch
+    try:
+        arch = profile.data["/arch"]
+        arch_name = profile.data["/arch/name"]
+    except Exception as e:
+        print_stack()
+        log.error(e)
+        print("No arch definition provided by profile", file=sys.stderr)
+        exit(1)
+    
+    if 'name' not in arch:
+        print("Arch name missing", file=sys.stderr)
+        exit(1)
+
+    package = None
+    res_package = None
+    if 'package' in arch:
+        if 'version' in arch:
+            package_version = arch['version']
+        else:
+            package_version = 'latest'
+        package_name = arch['package']
+        package = load_installed_package(package_name, package_version)
+        res_package = package
+    
+    if package is None:
+        package = project
+    
+    # search arch in found package
+    archs = package.archs
+    arch = next(arch for arch in archs if arch.name==arch_name)
+    if arch is None:
+        print(f"Arch {arch_name} not found in {package}", file=sys.stderr)
+        exit(1)
+    
+    return arch, res_package
+#         arch_mpu = profile.data["/arch/mpu"]        
+#         arch_definition = profile.data["/arch/definition"]
+
+#     # write CMakeLists.txt from template
+#     try:
+#         loader = template.Loader(os.path.join(toolchain_path, 'template'), autoescape=None)
+#         cmakelists = loader.load("CMakeLists.txt").generate(
+#             includes=includes,
+#             project_path=os.path.abspath(os.getcwd())
+#         )
+#         with open("CMakeLists.txt", "w") as f:
+#             f.write(cmakelists.decode("utf-8"))
+#     except Exception as e:
+#         print_stack()
+#         log.error(f"{e}")
+#         exit(1)
+
+
+# def get_arch(config, target, dependencies):
+#     target_arch = target.arch
+#     
+#     res = None
+#     found_dependency = None
+#     for dependency in dependencies:
+#         for arch in dependency.arch:
+#             if arch==target.arch:
+#                 if found_dependency is not None:
+#                     log.error(f"arch '{arch}' redefinition from'{found_dependency[1].name}' in {dependency.name}")
+#                     exit(1)
+#                 found_dependency = (dependency.arch[arch], dependency)
+#                 if dependency.arch[arch].definition=="":
+#                     log.error(f"missing definition in arch '{arch}' from '{dependency.name}'")
+#                     exit(1)
+# 
+#     if found_dependency is None:
+#         print(f"no configuration available for arch '{target.arch}'", file=sys.stderr)
+#         exit(1)
+#     
+#     return found_dependency
+
+# def get_cmake_includes(dependencies):
+#     res = ""
+#     
+#     for dependency in dependencies:
+#         cmake = dependency.cmake
+#         if cmake:
+#             if cmake.include:
+#                 library_path = os.path.abspath(dependency.path)
+#                 res = f'{res}set(LIBRARY_PATH "{library_path}")\n'
+#                 res = f"{res}include({os.path.join(library_path, cmake.include)})\n"
+#     return res
+# 
+# def get_cmake_target_includes(target):
+#     res = ""
+#     
+#     if target.definition:
+#         target_path = os.path.abspath(target.definition)
+#         res = f'{res}set(TARGET_PATH "{os.path.dirname(target_path)}")\n'
+#         res = f"{res}include({target_path})\n"
+#     return res
+# 
+# def add_build_file(dependencies, target):
+#     global toolchain_path
+#     
+#     # build list of includes
+#     includes = get_cmake_target_includes(target)
+#     includes += get_cmake_includes(dependencies)
+#     
+#     # write CMakeLists.txt from template
+#     try:
+#         loader = template.Loader(os.path.join(toolchain_path, 'template'), autoescape=None)
+#         cmakelists = loader.load("CMakeLists.txt").generate(
+#             includes=includes,
+#             project_path=os.path.abspath(os.getcwd())
+#         )
+#         with open("CMakeLists.txt", "w") as f:
+#             f.write(cmakelists.decode("utf-8"))
+#     except Exception as e:
+#         print_stack()
+#         log.error(f"{e}")
+#         exit(1)
+
 

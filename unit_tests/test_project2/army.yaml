@@ -2,5 +2,8 @@ name: test_project
 description: test project
 version: 1.0.0 
 
+dependencies:
+  lib1: 2.0.0
+
 profiles:
   - profile

@@ -1,0 +1,5 @@
+name: lib1
+description: lib1
+version: 2.0.0
+
+cmake: cmake/lib1.cmake

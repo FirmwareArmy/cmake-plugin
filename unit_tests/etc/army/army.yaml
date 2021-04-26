@@ -2,3 +2,8 @@ repositories:
   compile-plugin:
     type: git-local
     uri: /..
+  
+  lib1:
+    type: git-local
+    uri: lib1
+  

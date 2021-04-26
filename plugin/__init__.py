@@ -8,9 +8,16 @@ parser.add_group(name="build", help="Build Commands")
 # add target validator
 Profile._schema['arch'] = Optional(
         Dict({
-            'cpu': String(),
-            'mpu': String(),
-            'definition': String()
+            'name': String(),
+            'package': Optional(String()),
+            'version': Optional(String())
+        })
+    )
+
+Profile._schema['target'] = Optional(
+        Dict({
+            'definition': String(),
+            'elf': Optional(String()),
         })
     )
 
