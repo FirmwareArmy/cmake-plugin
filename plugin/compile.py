@@ -3,7 +3,6 @@ from army.api.debugtools import print_stack
 from army.api.log import log, get_log_level
 from army.api.package import load_project_packages, load_installed_package
 from army.api.project import load_project
-import tornado.template as template
 import shutil
 import os
 import sys
@@ -44,14 +43,7 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
     if project is None:
         print(f"no project found", sys.stderr)
         exit(1)
-    
-    # get target config
-#     target = ctx.parent.target
-#     target_name = ctx.parent.target_name
-#     if target is None:
-#         print(f"no target specified", file=sys.stderr)
-#         exit(1)
-# 
+        # 
     cmake_opts = []
     make_opts = []
 
@@ -82,7 +74,11 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
         print("No toolchain definition provided by profile", file=sys.stderr)
         exit(1)
 
+    # get arch from profile
     arch, arch_package = get_arch(profile, project, dependencies)
+
+    # get target from profile
+    target = get_target(profile)
 
     if debug==True and instrument==True:
         print(f"debug and instrument can not be used simultaneously", file=sys.stderr)
@@ -153,7 +149,7 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
         os.makedirs(build_path, exist_ok=True)
 
         # add smake files
-        add_cmake_files(build_path, dependencies, arch, arch_package)
+        add_cmake_files(build_path, dependencies, arch, arch_package, target)
 
         # TODO force rebuild elf file even if not changed
         # find ${PROJECT_PATH}/output -name "*.elf" -exec rm -f {} \; 2>/dev/null
@@ -247,7 +243,7 @@ def locate_cmake():
     
     return os.path.join(tools_path, cmake_path, 'bin', 'cmake')
 
-def add_cmake_files(build_path, dependencies, arch, arch_package):
+def add_cmake_files(build_path, dependencies, arch, arch_package, target):
     global tools_path
 #     # build list of includes
 #     includes = get_cmake_target_includes(target)
@@ -265,6 +261,11 @@ def add_cmake_files(build_path, dependencies, arch, arch_package):
         print("\n# dependencies section definition", file=fa)
         
         with open(os.path.join(build_path, "dependencies.cmake"), "w") as fd:
+            # add target
+            print("\n# target definition", file=fa)
+            if target is not None:
+                print(f'include_army_package_file(_ {target["definition"]})', file=fd)
+
             for dependency in dependencies:
                 if 'cmake' in dependency.definition:
                     print(f'set({dependency.name}_path "{dependency.path}")', file=fa)
@@ -285,8 +286,8 @@ def add_cmake_files(build_path, dependencies, arch, arch_package):
                     os.putenv(f"package_{arch_package.name}_path", arch_package.path)
                     print(f'include_army_package_file({arch_package.name} {arch.mpu_definition})', file=fd)
 
-#                 print(f'set(PACKAGE_PATH "{arch["package_path"]}")', file=fa)
-
+            
+            
 def get_arch(profile, project, dependencies):
     # add arch
     try:
@@ -324,86 +325,11 @@ def get_arch(profile, project, dependencies):
         exit(1)
     
     return arch, res_package
-#         arch_mpu = profile.data["/arch/mpu"]        
-#         arch_definition = profile.data["/arch/definition"]
 
-#     # write CMakeLists.txt from template
-#     try:
-#         loader = template.Loader(os.path.join(toolchain_path, 'template'), autoescape=None)
-#         cmakelists = loader.load("CMakeLists.txt").generate(
-#             includes=includes,
-#             project_path=os.path.abspath(os.getcwd())
-#         )
-#         with open("CMakeLists.txt", "w") as f:
-#             f.write(cmakelists.decode("utf-8"))
-#     except Exception as e:
-#         print_stack()
-#         log.error(f"{e}")
-#         exit(1)
-
-
-# def get_arch(config, target, dependencies):
-#     target_arch = target.arch
-#     
-#     res = None
-#     found_dependency = None
-#     for dependency in dependencies:
-#         for arch in dependency.arch:
-#             if arch==target.arch:
-#                 if found_dependency is not None:
-#                     log.error(f"arch '{arch}' redefinition from'{found_dependency[1].name}' in {dependency.name}")
-#                     exit(1)
-#                 found_dependency = (dependency.arch[arch], dependency)
-#                 if dependency.arch[arch].definition=="":
-#                     log.error(f"missing definition in arch '{arch}' from '{dependency.name}'")
-#                     exit(1)
-# 
-#     if found_dependency is None:
-#         print(f"no configuration available for arch '{target.arch}'", file=sys.stderr)
-#         exit(1)
-#     
-#     return found_dependency
-
-# def get_cmake_includes(dependencies):
-#     res = ""
-#     
-#     for dependency in dependencies:
-#         cmake = dependency.cmake
-#         if cmake:
-#             if cmake.include:
-#                 library_path = os.path.abspath(dependency.path)
-#                 res = f'{res}set(LIBRARY_PATH "{library_path}")\n'
-#                 res = f"{res}include({os.path.join(library_path, cmake.include)})\n"
-#     return res
-# 
-# def get_cmake_target_includes(target):
-#     res = ""
-#     
-#     if target.definition:
-#         target_path = os.path.abspath(target.definition)
-#         res = f'{res}set(TARGET_PATH "{os.path.dirname(target_path)}")\n'
-#         res = f"{res}include({target_path})\n"
-#     return res
-# 
-# def add_build_file(dependencies, target):
-#     global toolchain_path
-#     
-#     # build list of includes
-#     includes = get_cmake_target_includes(target)
-#     includes += get_cmake_includes(dependencies)
-#     
-#     # write CMakeLists.txt from template
-#     try:
-#         loader = template.Loader(os.path.join(toolchain_path, 'template'), autoescape=None)
-#         cmakelists = loader.load("CMakeLists.txt").generate(
-#             includes=includes,
-#             project_path=os.path.abspath(os.getcwd())
-#         )
-#         with open("CMakeLists.txt", "w") as f:
-#             f.write(cmakelists.decode("utf-8"))
-#     except Exception as e:
-#         print_stack()
-#         log.error(f"{e}")
-#         exit(1)
-
-
+def get_target(profile):
+    target = None
+    
+    if "target" in profile.data:
+        target = profile.data["/target"]
+    
+    return target

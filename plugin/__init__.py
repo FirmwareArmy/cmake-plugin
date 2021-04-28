@@ -3,7 +3,8 @@ from army.api.profile import Profile
 from army.api.schema import Schema, String, VersionString, Optional, PackageString, Array, Dict, VariableDict, Variant, VersionRangeString, Boolean
 
 parser = get_army_parser()
-parser.add_group(name="build", help="Build Commands")
+if parser.find_group("build") is None:
+    parser.add_group(name="build", help="Build Commands", chain=True)
 
 # add target validator
 Profile._schema['arch'] = Optional(
