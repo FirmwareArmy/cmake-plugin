@@ -43,7 +43,7 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
     if project is None:
         print(f"no project found", sys.stderr)
         exit(1)
-        # 
+
     cmake_opts = []
     make_opts = []
 
