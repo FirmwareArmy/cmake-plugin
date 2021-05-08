@@ -17,7 +17,9 @@ Profile._schema['arch'] = Optional(
 
 Profile._schema['target'] = Optional(
         Dict({
+            'pre': Optional(Array(String())),
             'definition': String(),
+            'post': Optional(Array(String())),
             'elf': Optional(String()),
         })
     )

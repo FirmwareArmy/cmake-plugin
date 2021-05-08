@@ -261,11 +261,24 @@ def add_cmake_files(build_path, dependencies, arch, arch_package, target):
         print("\n# dependencies section definition", file=fa)
         
         with open(os.path.join(build_path, "dependencies.cmake"), "w") as fd:
+            
             # add target
             print("\n# target definition", file=fa)
             if target is not None:
+                # add pre definitions
+                if 'pre' in target:
+                    for pre in target['pre']:
+                        print(f'include_army_package_file(_ {pre})', file=fd)
+                        
+                # add definition
                 print(f'include_army_package_file(_ {target["definition"]})', file=fd)
 
+                # add post definitions
+                if 'post' in target:
+                    for post in target['post']:
+                        print(f'include_army_package_file(_ {post})', file=fd)
+                
+                
             for dependency in dependencies:
                 if 'cmake' in dependency.definition:
                     print(f'set({dependency.name}_path "{dependency.path}")', file=fa)
