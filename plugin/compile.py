@@ -55,7 +55,7 @@ def compile(ctx, debug, instrument, jobs, **kwargs):
 
     # load dependencies
     try:
-        dependencies = load_project_packages(project)
+        dependencies = load_project_packages(project, profile=profile)
         log.debug(f"dependencies: {dependencies}")
     except Exception as e:
         print_stack()
@@ -282,13 +282,14 @@ def add_cmake_files(build_path, dependencies, arch, arch_package, target):
             for dependency in dependencies:
                 if 'cmake' in dependency.definition:
                     print(f'set({dependency.name}_path "{dependency.path}")', file=fa)
-                    print(f'set({dependency.name}_definition "{os.path.join(dependency.path, dependency.definition["cmake"])}")', file=fa)
+                    for definition in dependency.definition["cmake"]:
+                        print(f'set({dependency.name}_definition "{os.path.join(dependency.path, definition)}")', file=fa)
                     print(f"include_army_package({dependency.name})", file=fd)
 
                     os.putenv(f"package_{dependency.name}_path", dependency.path)
-                    os.putenv(f"package_{dependency.name}_definition", dependency.definition["cmake"])
+                    os.putenv(f"package_{dependency.name}_definition", ";".join(dependency.definition["cmake"]))
                     
-                log.info(f"Adding dependency: {dependency}")
+                    log.info(f"Adding dependency: {dependency}")
             
             # add arch
             print("\n# arch definition", file=fa)
@@ -324,7 +325,7 @@ def get_arch(profile, project, dependencies):
         else:
             package_version = 'latest'
         package_name = arch['package']
-        package = load_installed_package(package_name, package_version)
+        package = load_installed_package(package_name, package_version, profile=profile)
         res_package = package
     
     if package is None:
